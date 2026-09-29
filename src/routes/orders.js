@@ -4,7 +4,8 @@ import { formatXaf } from '../pricing.js';
 import { getFxRates } from '../fx.js';
 import { toXaf } from '../pricing.js';
 import * as shopify from '../shopify.js';
-import * as aliexpress from '../providers/aliexpress.js';
+import { getAdapter } from '../suppliers/registry.js';
+import { toSupplierAddress, encodeVariantId } from '../suppliers/common.js';
 import { config } from '../config.js';
 import { layout, esc, attr, statusBadge } from '../util/html.js';
 
@@ -70,7 +71,8 @@ router.get('/purchase-orders/:id', (req, res) => {
   const a = pj(p.shipping_address_json, {});
   const c = pj(p.customer_json, {});
   const product = p.product_id ? getProduct(p.product_id) : null;
-  const canAuto = config.aliexpress.enabled && product?.provider === 'aliexpress' && p.status === 'pending';
+  const adapter = product ? getAdapter(product.provider) : null;
+  const canAuto = Boolean(adapter?.supportsAutomaticPurchasing) && p.status === 'pending';
   res.send(layout({ title: `PO-${p.id}`, active: '/purchase-orders', flash: flashFrom(req.query), body: `
   <h1>PO-${p.id} · ${esc(p.title)} ${statusBadge(p.status)}</h1>
   <div class="grid">
@@ -79,7 +81,7 @@ router.get('/purchase-orders/:id', (req, res) => {
       <p><b>Quantity:</b> ${p.quantity}${p.supplier_sku_attr ? `<br><b>Variant (SKU attr):</b> <span class="mono">${esc(p.supplier_sku_attr)}</span>` : ''}<br><b>Variant:</b> ${esc(p.title)}</p>
       <p><b>You pay the supplier:</b> ${p.supplier_unit_cost != null ? `${esc(p.supplier_unit_cost)} ${esc(p.supplier_currency)} × ${p.quantity} + shipping ${esc(p.supplier_shipping || 0)} ${esc(p.supplier_currency)} × ${p.quantity} ≈ <b>${formatXaf(p.supplier_total_xaf)}</b>` : '—'}</p>
       <p><b>Customer paid you:</b> ${esc(p.sold_unit_price)} × ${p.quantity} = <b>${formatXaf(Number(p.sold_unit_price) * p.quantity)}</b></p>
-      ${canAuto ? `<form method="post" action="/purchase-orders/${p.id}/auto-order"><button type="submit">Place & pay on AliExpress automatically</button></form>` : ''}
+      ${canAuto ? `<form method="post" action="/purchase-orders/${p.id}/auto-order"><button type="submit">Place & pay on ${esc(adapter.supplierId)} automatically</button></form>` : ''}
     </div>
     <div class="card"><h2>Ship to (paste on the supplier checkout)</h2>
       <pre class="mono" style="white-space:pre-wrap">${esc([a.name || c.name, a.address1, a.address2, [a.city, a.province, a.zip].filter(Boolean).join(' '), a.country || 'Cameroon', a.phone || c.phone].filter(Boolean).join('\n'))}</pre>
@@ -104,7 +106,7 @@ router.get('/purchase-orders/:id', (req, res) => {
         <div><label><b>Tracking URL (optional)</b></label><input type="url" name="tracking_url" value="${attr(p.tracking_url || '')}"></div>
       </div>
       <div class="actions"><button type="submit">Save tracking & mark shipped on Shopify</button>
-      ${p.supplier_order_ref && config.aliexpress.enabled ? `</form><form method="post" action="/purchase-orders/${p.id}/fetch-tracking"><button class="secondary" type="submit">Fetch tracking from AliExpress</button>` : ''}
+      ${p.supplier_order_ref && adapter?.supportsAutomaticPurchasing ? `</form><form method="post" action="/purchase-orders/${p.id}/fetch-tracking"><button class="secondary" type="submit">Fetch tracking from ${esc(adapter.supplierId)}</button>` : ''}
       </div>
     </form>
   </div>
@@ -149,25 +151,32 @@ router.post('/purchase-orders/:id/status', (req, res) => {
 router.post('/purchase-orders/:id/auto-order', async (req, res) => {
   const p = getPurchaseOrder(req.params.id);
   const product = p?.product_id ? getProduct(p.product_id) : null;
-  if (!p || !product) return redirectMsg(res, `/purchase-orders/${req.params.id}`, 'err', 'No supplier product mapped');
+  const adapter = product ? getAdapter(product.provider) : null;
+  if (!p || !product || !adapter) return redirectMsg(res, `/purchase-orders/${req.params.id}`, 'err', 'No supplier product mapped');
+  if (!adapter.supportsAutomaticPurchasing) return redirectMsg(res, `/purchase-orders/${p.id}`, 'err', `${adapter.supplierId} does not support automatic purchasing.`);
   try {
-    const { orderIds } = await aliexpress.placeOrder({
-      items: [{ productId: product.source_product_id, skuAttr: p.supplier_sku_attr, quantity: p.quantity }],
-      address: pj(p.shipping_address_json, {}), memo: `Shop order ${p.order_number}`,
+    const result = await adapter.createPurchaseOrder({
+      idempotencyKey: `po:${p.id}`,
+      externalOrderReference: `Shop order ${p.order_number}`,
+      shippingAddress: toSupplierAddress(pj(p.shipping_address_json, {})),
+      lines: [{ supplierVariantId: encodeVariantId(product.source_product_id, p.supplier_sku_attr || ''), quantity: p.quantity, expectedUnitCost: { amount: Number(p.supplier_unit_cost || 0), currency: p.supplier_currency || 'USD' } }],
     });
-    updatePurchaseOrder(p.id, { status: 'ordered', supplier_order_ref: orderIds.join(','), supplier_paid_at: new Date().toISOString(), notes: 'Placed via AliExpress API' });
-    logEvent('supplier.auto_ordered', `PO-${p.id}: AliExpress order ${orderIds.join(',')}`);
-    redirectMsg(res, `/purchase-orders/${p.id}`, 'ok', `AliExpress order ${orderIds.join(', ')} placed.`);
+    if (result.status === 'REJECTED') return redirectMsg(res, `/purchase-orders/${p.id}`, 'err', `Supplier refused the order: ${result.message}`);
+    updatePurchaseOrder(p.id, { status: 'ordered', supplier_order_ref: result.supplierOrderId, supplier_paid_at: new Date().toISOString(), notes: result.message || `Placed via ${adapter.supplierId}` });
+    logEvent('supplier.auto_ordered', `PO-${p.id}: ${adapter.supplierId} order ${result.supplierOrderId}`);
+    redirectMsg(res, `/purchase-orders/${p.id}`, 'ok', `${adapter.supplierId} order ${result.supplierOrderId} placed (${result.status}).`);
   } catch (e) { redirectMsg(res, `/purchase-orders/${p.id}`, 'err', e.message); }
 });
 
 router.post('/purchase-orders/:id/fetch-tracking', async (req, res) => {
   const p = getPurchaseOrder(req.params.id);
-  if (!p?.supplier_order_ref) return redirectMsg(res, `/purchase-orders/${req.params.id}`, 'err', 'No supplier order reference');
+  const product = p?.product_id ? getProduct(p.product_id) : null;
+  const adapter = product ? getAdapter(product.provider) : null;
+  if (!p?.supplier_order_ref || !adapter) return redirectMsg(res, `/purchase-orders/${req.params.id}`, 'err', 'No supplier order reference');
   try {
-    const t = await aliexpress.getTracking(p.supplier_order_ref.split(',')[0]);
-    if (!t.trackingNumber) return redirectMsg(res, `/purchase-orders/${p.id}`, 'err', 'AliExpress has no tracking number yet.');
-    updatePurchaseOrder(p.id, { tracking_number: t.trackingNumber, tracking_company: t.company });
+    const t = (await adapter.getTracking(p.supplier_order_ref)).find((x) => x.trackingNumber);
+    if (!t) return redirectMsg(res, `/purchase-orders/${p.id}`, 'err', 'The supplier has no tracking number yet.');
+    updatePurchaseOrder(p.id, { tracking_number: t.trackingNumber, tracking_company: t.carrier || null, tracking_url: t.trackingUrl || null });
     redirectMsg(res, `/purchase-orders/${p.id}`, 'ok', `Tracking ${t.trackingNumber} fetched. Click "Save tracking & mark shipped" to notify the customer.`);
   } catch (e) { redirectMsg(res, `/purchase-orders/${p.id}`, 'err', e.message); }
 });

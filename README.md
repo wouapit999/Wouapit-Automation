@@ -91,15 +91,26 @@ you can see exactly how much you keep after the gateway takes its cut and after 
 ```
 src/server.js            Express app, Basic‑auth admin UI, webhook endpoint
 src/routes/*.js          dashboard, import/review/publish, orders & supplier orders, settings
-src/providers/           aliexpress.js (DS API + page fallback, order placement, tracking), alibaba.js, index.js
+src/suppliers/types.ts   SupplierAdapter contract (Money, SupplierProduct, SupplierQuote, SupplierOrderRequest…)
+src/suppliers/           aliexpress-adapter.js, alibaba-adapter.js (implement SupplierAdapter), registry.js, common.js
+src/providers/           low-level marketplace access used by the adapters: aliexpress.js (DS API + page fallback), alibaba.js
 src/pricing.js           pricing engine (pure functions, unit‑tested)
 src/shopify.js           Admin GraphQL: productSet, publish, price updates, webhooks, fulfilments
 src/webhooks.js          HMAC verification, orders/paid → purchase orders, optional auto‑order
 src/sync.js              recompute prices, refresh from supplier, push to Shopify
 src/db.js                SQLite schema + queries (data/dropship.sqlite — back this folder up)
 src/scripts/             register-webhooks, sync-prices, update-fx
-test/                    `npm test`
+test/                    `npm test`   ·   `npm run typecheck` verifies the adapters against the TypeScript contract
 ```
+
+### Adding another supplier
+
+Implement `SupplierAdapter` from `src/suppliers/types.ts` in a new file under `src/suppliers/` and register it in
+`registry.js`. Variant ids are `"<supplierProductId>:<supplier sku reference>"` so a purchase order can be placed
+without a database lookup. `createPurchaseOrder` must be idempotent: reuse `getPurchaseRequest`/`savePurchaseRequest`
+from `db.js` keyed by `idempotencyKey`, so a webhook retry can never pay a supplier twice. Set
+`supportsAutomaticPurchasing = false` and throw `UnsupportedOperationError` for suppliers that must be bought
+from by hand; the UI then shows the manual "mark as ordered & paid" flow only.
 
 ## 6. Deploying on a VPS (production)
 

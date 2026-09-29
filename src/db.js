@@ -93,6 +93,16 @@ function migrate(db) {
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS supplier_purchase_requests (
+    idempotency_key TEXT PRIMARY KEY,
+    supplier_id TEXT NOT NULL,
+    supplier_order_id TEXT,
+    status TEXT NOT NULL,
+    request_json TEXT,
+    result_json TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS webhook_receipts (
     webhook_id TEXT PRIMARY KEY,
     received_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -264,4 +274,17 @@ export function webhookSeen(id) {
   if (d.prepare('SELECT 1 FROM webhook_receipts WHERE webhook_id = ?').get(id)) return true;
   d.prepare('INSERT INTO webhook_receipts (webhook_id) VALUES (?)').run(id);
   return false;
+}
+
+// ---------- supplier purchase idempotency ----------
+/** Returns the stored SupplierOrderResult for this key, or null. */
+export function getPurchaseRequest(idempotencyKey) {
+  const row = getDb().prepare('SELECT result_json FROM supplier_purchase_requests WHERE idempotency_key = ?').get(idempotencyKey);
+  return row ? pj(row.result_json, null) : null;
+}
+export function savePurchaseRequest(idempotencyKey, supplierId, request, result) {
+  getDb().prepare(`INSERT INTO supplier_purchase_requests (idempotency_key, supplier_id, supplier_order_id, status, request_json, result_json)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(idempotency_key) DO UPDATE SET supplier_order_id = excluded.supplier_order_id, status = excluded.status, result_json = excluded.result_json`)
+    .run(idempotencyKey, supplierId, result?.supplierOrderId || null, result?.status || 'UNKNOWN', j(request), j(result));
 }

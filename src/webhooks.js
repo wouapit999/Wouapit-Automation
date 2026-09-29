@@ -3,7 +3,9 @@ import { config } from './config.js';
 import { getDb, logEvent, webhookSeen, getOrderByShopifyId, insertOrder, insertPurchaseOrder, updatePurchaseOrder, getProductByShopifyId, listPurchaseOrders } from './db.js';
 import { getFxRates } from './fx.js';
 import { toXaf } from './pricing.js';
-import * as aliexpress from './providers/aliexpress.js';
+import { getAdapter } from './suppliers/registry.js';
+import { toSupplierAddress } from './suppliers/common.js';
+import { encodeVariantId } from './suppliers/aliexpress-adapter.js';
 
 export function verifyShopifyHmac(rawBody, headerHmac, secret = config.shopify.apiSecret) {
   if (!secret || !headerHmac) return false;
@@ -82,27 +84,43 @@ export async function processPaidOrder(order) {
   }
   logEvent('order.received', `Paid order ${order.name}: ${created.length} line(s) → purchase orders created`, { orderId, shopify_order_id: order.id });
 
-  // Optional: place the AliExpress order automatically and pay the supplier from your AliExpress account.
-  if (config.aliexpress.enabled && config.aliexpress.autoOrder) {
-    const items = created.filter((c) => c.product?.provider === 'aliexpress' && c.product.source_product_id);
-    if (items.length) {
-      try {
-        const { orderIds } = await aliexpress.placeOrder({
-          items: items.map((c) => ({ productId: c.product.source_product_id, skuAttr: c.variant?.skuAttr, quantity: c.qty })),
-          address: order.shipping_address || {},
-          memo: `Shop order ${order.name}`,
-        });
-        for (const c of items) {
-          updatePurchaseOrder(c.poId, { status: 'ordered', supplier_order_ref: orderIds.join(','), supplier_paid_at: new Date().toISOString(), notes: 'Placed automatically via AliExpress API' });
-        }
-        logEvent('supplier.auto_ordered', `AliExpress order(s) ${orderIds.join(', ')} placed for ${order.name}`);
-      } catch (e) {
-        logEvent('supplier.auto_order_failed', `Auto-order failed for ${order.name}: ${e.message}. Left as pending for manual purchase.`, null, 'error');
-      }
-    }
-  }
+  // Optional: place the supplier order automatically through the supplier adapter (AliExpress DS API).
+  if (config.aliexpress.autoOrder) await autoPurchase(order, created);
   return orderId;
 }
+
+/** Place supplier orders for the lines whose adapter supports automatic purchasing. Idempotent per Shopify order. */
+export async function autoPurchase(order, created) {
+  const groups = new Map();
+  for (const c of created) {
+    if (!c.product?.source_product_id) continue;
+    const adapter = getAdapter(c.product.provider);
+    if (!adapter?.supportsAutomaticPurchasing) continue;
+    if (!groups.has(adapter.supplierId)) groups.set(adapter.supplierId, { adapter, lines: [] });
+    groups.get(adapter.supplierId).lines.push(c);
+  }
+  for (const { adapter, lines } of groups.values()) {
+    const result = await adapter.createPurchaseOrder({
+      idempotencyKey: `shopify:${order.id}:${adapter.supplierId}`,
+      externalOrderReference: `Shop order ${order.name}`,
+      shippingAddress: toSupplierAddress(order.shipping_address || {}),
+      lines: lines.map((c) => ({
+        supplierVariantId: encodeVariantId(c.product.source_product_id, c.variant?.skuAttr || c.variant?.skuId || ''),
+        quantity: c.qty,
+        expectedUnitCost: { amount: Number(c.variant?.supplierPrice || 0), currency: c.variant?.supplierCurrency || 'USD' },
+      })),
+    });
+    if (result.status === 'REJECTED') {
+      logEvent('supplier.auto_order_failed', `${adapter.supplierId} refused order for ${order.name}: ${result.message}. Left as pending for manual purchase.`, null, 'error');
+      continue;
+    }
+    for (const c of lines) {
+      updatePurchaseOrder(c.poId, { status: 'ordered', supplier_order_ref: result.supplierOrderId, supplier_paid_at: new Date().toISOString(), notes: result.message || `Placed automatically via ${adapter.supplierId}` });
+    }
+    logEvent('supplier.auto_ordered', `${adapter.supplierId} order ${result.supplierOrderId} placed for ${order.name} (${result.status})`);
+  }
+}
+
 
 export async function processCancelledOrder(order) {
   const local = getOrderByShopifyId(order.id);

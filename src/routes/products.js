@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { insertProduct, getProduct, updateProduct, listProducts, deleteProduct, logEvent } from '../db.js';
 import { importFromUrl } from '../providers/index.js';
+import { adapterForUrl } from '../suppliers/registry.js';
 import { priceProduct, effectiveRules, refreshProductFromSupplier } from '../sync.js';
 import { deliveryEstimateDays, formatXaf, DEFAULT_PRICING_RULES } from '../pricing.js';
 import { getFxRates } from '../fx.js';
@@ -29,7 +30,8 @@ router.get('/import', (req, res) => {
 
 router.post('/import', async (req, res) => {
   try {
-    const imported = await importFromUrl(req.body.url);
+    const adapter = adapterForUrl(String(req.body.url || '').trim());
+    const imported = adapter ? (await adapter.getProduct(String(req.body.url).trim())).internal : await importFromUrl(req.body.url);
     priceProduct(imported);
     imported.pricing.importWarnings = imported.warnings || [];
     imported.pricing.confidence = imported.confidence;
