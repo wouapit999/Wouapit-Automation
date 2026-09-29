@@ -10,7 +10,7 @@ export function layout({ title, body, flash, active = '' }) {
   ].map(([href, label]) => `<a href="${href}" class="${active === href ? 'active' : ''}">${label}</a>`).join('');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)} · CM Dropship</title>
+<title>${esc(title)} · Wouapit Automation</title>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--ink:#1a1d23;--muted:#667085;--line:#e4e7ec;--brand:#0b7a4b;--brand-ink:#fff;--warn:#b54708;--warn-bg:#fff4e5;--ok:#027a48;--ok-bg:#ecfdf3;--err:#b42318;--err-bg:#fef3f2;--info-bg:#eff8ff}
 *{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
@@ -40,7 +40,7 @@ details summary{cursor:pointer;color:var(--brand);font-weight:600}
 .actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
 code{background:#eef2f6;padding:1px 5px;border-radius:4px;font-size:13px}
 </style></head><body>
-<header><div class="logo">🛒 CM Dropship</div><nav>${nav}</nav></header>
+<header><div class="logo">🛒 Wouapit Automation</div><nav>${nav}</nav></header>
 <main>${flash ? `<div class="flash ${esc(flash.type)}">${esc(flash.message)}</div>` : ''}${body}</main>
 </body></html>`;
 }

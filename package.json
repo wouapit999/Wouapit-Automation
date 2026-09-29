@@ -1,5 +1,5 @@
 {
-  "name": "cm-dropship",
+  "name": "wouapit-automation",
   "version": "0.1.0",
   "description": "AliExpress/Alibaba -> Shopify dropshipping automation for Cameroon: import supplier links, price them in XAF, publish to Shopify, track supplier payouts and fulfilment.",
   "type": "module",
@@ -25,5 +25,9 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wouapit999/Wouapit-Automation.git"
   }
 }

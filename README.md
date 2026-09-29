@@ -1,4 +1,4 @@
-# CM Dropship — AliExpress/Alibaba → Shopify automation for Cameroon
+# Wouapit Automation — AliExpress/Alibaba → Shopify dropshipping for Cameroon
 
 Paste a supplier link, get a Shopify product priced in FCFA with your markup, transport, customs and the
 supplier's conditions built in. When a customer pays you on Shopify, the app tells you exactly what to buy
@@ -53,9 +53,9 @@ Vercel runs the app as serverless functions. Its disk is wiped at every deploy, 
 **Neon** (hosted PostgreSQL, free tier), which Vercel installs for you from its Marketplace.
 
 1. Go to https://vercel.com, sign up **with your GitHub account**, then **Add New… → Project** and import the
-   repository `wouapit999/wouapit999`.
-2. In the import screen set **Root Directory** to `dropship` (click *Edit* next to it). Framework preset:
-   *Other*. Leave build settings as detected (the `vercel.json` in the folder takes care of routing).
+   repository `wouapit999/Wouapit-Automation`.
+2. Leave **Root Directory** as the repository root and the framework preset on *Other*; `vercel.json` takes care
+   of routing and the cron job.
 3. Open **Environment Variables** on the same screen and add:
    `ADMIN_PASSWORD`, `SHOPIFY_STORE_DOMAIN`, `SHOPIFY_ADMIN_TOKEN`, `SHOPIFY_API_SECRET`,
    `CRON_SECRET` (any long random text), `NODEJS_HELPERS` = `0` (keeps the raw webhook body so Shopify
@@ -70,18 +70,16 @@ Vercel runs the app as serverless functions. Its disk is wiped at every deploy, 
 6. **Deployments → ⋯ → Redeploy** so the new variables are picked up. Open the URL, log in
    (`admin` / your password), then **Settings → Test connection** and **Register webhooks**.
 
-Every `git push` to the production branch redeploys automatically. The daily supplier price sync runs through
-Vercel Cron (`vercel.json`, 05:00 UTC); it calls `/cron/sync-prices` with your `CRON_SECRET`.
-Vercel's production branch defaults to `main`; if the code is on another branch, set it under
-**Settings → Git → Production Branch** or merge the branch into `main`.
+Every `git push` to `main` redeploys automatically. The daily supplier price sync runs through Vercel Cron
+(`vercel.json`, 05:00 UTC); it calls `/cron/sync-prices` with your `CRON_SECRET`.
 
 ### B. On your laptop (Windows, macOS or Linux)
 
 1. Install **Node.js 22 or newer** from https://nodejs.org (LTS installer) and **Git** from https://git-scm.com.
 2. Open a terminal (PowerShell on Windows) and run:
    ```bash
-   git clone https://github.com/wouapit999/wouapit999.git
-   cd wouapit999/dropship
+   git clone https://github.com/wouapit999/Wouapit-Automation.git
+   cd Wouapit-Automation
    npm install
    copy .env.example .env      # macOS/Linux: cp .env.example .env
    ```
@@ -105,7 +103,7 @@ Vercel's production branch defaults to `main`; if the code is on another branch,
 
 ```bash
 # once: install flyctl from https://fly.io/docs/flyctl/install and create a free account
-cd wouapit999/dropship
+cd Wouapit-Automation
 fly launch --copy-config --no-deploy          # accept the defaults; pick a unique app name when asked
 fly volumes create dropship_data --size 1 --region cdg
 fly secrets set ADMIN_PASSWORD=... SHOPIFY_STORE_DOMAIN=xxx.myshopify.com SHOPIFY_ADMIN_TOKEN=shpat_... \
@@ -118,7 +116,7 @@ Redeploy after code updates with `git pull && fly deploy`; the database on the v
 ### D. Docker on a VPS
 
 ```bash
-git clone https://github.com/wouapit999/wouapit999.git && cd wouapit999/dropship
+git clone https://github.com/wouapit999/Wouapit-Automation.git && cd Wouapit-Automation
 cp .env.example .env && nano .env            # APP_URL=https://shop-admin.yourdomain.com
 docker compose up -d                          # app on port 3000, data in a Docker volume
 ```

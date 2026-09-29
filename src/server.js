@@ -65,7 +65,7 @@ if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
   await getDb();
   const app = createApp();
   app.listen(config.port, () => {
-    console.log(`CM Dropship admin: http://localhost:${config.port}  (user: admin, password: ADMIN_PASSWORD)`);
+    console.log(`Wouapit Automation admin: http://localhost:${config.port}  (user: admin, password: ADMIN_PASSWORD)`);
     console.log(`Database: ${config.database.url ? 'Postgres ' + config.database.url.replace(/\/\/.*@/, '//***@') : 'embedded PGlite at ' + config.database.path}`);
     if (!config.adminPassword) console.warn('WARNING: ADMIN_PASSWORD is not set; the UI will refuse requests.');
   });
