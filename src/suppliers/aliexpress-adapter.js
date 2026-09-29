@@ -69,7 +69,7 @@ export class AliExpressAdapter {
   /** @param {import('./types.js').SupplierOrderRequest} req */
   async createPurchaseOrder(req) {
     if (!this.supportsAutomaticPurchasing) throw new UnsupportedOperationError('AliExpress API is not configured; buy manually and record the order number.');
-    const previous = getPurchaseRequest(req.idempotencyKey);
+    const previous = await getPurchaseRequest(req.idempotencyKey);
     if (previous) return previous; // same key → same result, never a second paid order
     const a = req.shippingAddress;
     /** @type {import('./types.js').SupplierOrderResult} */
@@ -84,7 +84,7 @@ export class AliExpressAdapter {
     } catch (e) {
       result = { supplierOrderId: '', status: 'REJECTED', message: errorMessage(e) };
     }
-    savePurchaseRequest(req.idempotencyKey, this.supplierId, req, result);
+    await savePurchaseRequest(req.idempotencyKey, this.supplierId, req, result);
     return result;
   }
 

@@ -13,8 +13,8 @@ export const router = Router();
 const redirectMsg = (res, path, type, message) => res.redirect(`${path}?${type}=${encodeURIComponent(message)}`);
 const flashFrom = (q) => (q.ok ? { type: 'ok', message: q.ok } : q.err ? { type: 'err', message: q.err } : null);
 
-router.get('/orders', (req, res) => {
-  const orders = listOrders();
+router.get('/orders', async (req, res) => {
+  const orders = await listOrders();
   const rows = orders.map((o) => `<tr>
     <td><a href="/orders/${o.id}">${esc(o.order_number)}</a></td>
     <td>${esc(o.customer.name || '')}<div class="muted small">${esc(o.customer.phone || o.customer.email || '')}</div></td>
@@ -28,10 +28,10 @@ router.get('/orders', (req, res) => {
     : '<p class="muted">No paid orders yet. Orders appear here automatically when a customer pays on Shopify (webhook <code>orders/paid</code>). Register the webhook in Settings.</p>'}</div>` }));
 });
 
-router.get('/orders/:id', (req, res) => {
-  const o = getOrder(req.params.id);
+router.get('/orders/:id', async (req, res) => {
+  const o = await getOrder(req.params.id);
   if (!o) return res.status(404).send('Not found');
-  const pos = listPurchaseOrders({ orderId: o.id });
+  const pos = await listPurchaseOrders({ orderId: o.id });
   const a = o.shipping_address || {};
   res.send(layout({ title: `Order ${o.order_number}`, active: '/orders', flash: flashFrom(req.query), body: `
   <h1>Order ${esc(o.order_number)} <a class="btn secondary" style="float:right" target="_blank" href="https://${attr(config.shopify.domain)}/admin/orders/${attr(o.shopify_order_id)}">Open in Shopify</a></h1>
@@ -54,9 +54,9 @@ function poTable(pos) {
     <td class="small">${esc(p.tracking_number || '')}</td></tr>`).join('')}</tbody></table>`;
 }
 
-router.get('/purchase-orders', (req, res) => {
+router.get('/purchase-orders', async (req, res) => {
   const status = req.query.status || '';
-  const pos = listPurchaseOrders(status ? { status } : {});
+  const pos = await listPurchaseOrders(status ? { status } : {});
   const owed = pos.filter((p) => p.status === 'pending' && !p.supplier_paid_at).reduce((s, p) => s + Number(p.supplier_total_xaf || 0), 0);
   const tabs = ['', 'pending', 'ordered', 'shipped', 'delivered', 'cancelled'].map((s) => `<a class="btn ${s === status ? '' : 'secondary'}" href="/purchase-orders${s ? `?status=${s}` : ''}">${s || 'all'}</a>`).join(' ');
   res.send(layout({ title: 'Supplier orders', active: '/purchase-orders', flash: flashFrom(req.query), body: `
@@ -65,12 +65,12 @@ router.get('/purchase-orders', (req, res) => {
   <div class="card">${poTable(pos)}</div>` }));
 });
 
-router.get('/purchase-orders/:id', (req, res) => {
-  const p = getPurchaseOrder(req.params.id);
+router.get('/purchase-orders/:id', async (req, res) => {
+  const p = await getPurchaseOrder(req.params.id);
   if (!p) return res.status(404).send('Not found');
   const a = pj(p.shipping_address_json, {});
   const c = pj(p.customer_json, {});
-  const product = p.product_id ? getProduct(p.product_id) : null;
+  const product = p.product_id ? await getProduct(p.product_id) : null;
   const adapter = product ? getAdapter(product.provider) : null;
   const canAuto = Boolean(adapter?.supportsAutomaticPurchasing) && p.status === 'pending';
   res.send(layout({ title: `PO-${p.id}`, active: '/purchase-orders', flash: flashFrom(req.query), body: `
@@ -119,38 +119,38 @@ router.get('/purchase-orders/:id', (req, res) => {
   </div>` }));
 });
 
-router.post('/purchase-orders/:id/ordered', (req, res) => {
+router.post('/purchase-orders/:id/ordered', async (req, res) => {
   const paid = req.body.supplier_total_xaf === '' ? undefined : Number(req.body.supplier_total_xaf);
-  updatePurchaseOrder(req.params.id, { status: 'ordered', supplier_order_ref: req.body.supplier_order_ref, supplier_paid_at: new Date().toISOString(), notes: req.body.notes || null, ...(paid !== undefined && !Number.isNaN(paid) ? { supplier_total_xaf: paid } : {}) });
-  logEvent('supplier.ordered', `PO-${req.params.id} ordered from supplier (ref ${req.body.supplier_order_ref})`);
+  await updatePurchaseOrder(req.params.id, { status: 'ordered', supplier_order_ref: req.body.supplier_order_ref, supplier_paid_at: new Date().toISOString(), notes: req.body.notes || null, ...(paid !== undefined && !Number.isNaN(paid) ? { supplier_total_xaf: paid } : {}) });
+  await logEvent('supplier.ordered', `PO-${req.params.id} ordered from supplier (ref ${req.body.supplier_order_ref})`);
   redirectMsg(res, `/purchase-orders/${req.params.id}`, 'ok', 'Recorded as ordered and paid.');
 });
 
 router.post('/purchase-orders/:id/ship', async (req, res) => {
-  const p = getPurchaseOrder(req.params.id);
+  const p = await getPurchaseOrder(req.params.id);
   if (!p) return res.status(404).send('Not found');
   try {
     const fid = await shopify.fulfillLineItems(p.shopify_order_id, [{ shopifyLineItemId: p.shopify_line_item_id, quantity: p.quantity }],
       { number: req.body.tracking_number, company: req.body.tracking_company, url: req.body.tracking_url });
-    updatePurchaseOrder(p.id, { status: 'shipped', tracking_number: req.body.tracking_number, tracking_company: req.body.tracking_company || null, tracking_url: req.body.tracking_url || null, shopify_fulfillment_id: fid });
-    logEvent('supplier.shipped', `PO-${p.id} shipped, Shopify fulfilment ${fid} created`);
+    await updatePurchaseOrder(p.id, { status: 'shipped', tracking_number: req.body.tracking_number, tracking_company: req.body.tracking_company || null, tracking_url: req.body.tracking_url || null, shopify_fulfillment_id: fid });
+    await logEvent('supplier.shipped', `PO-${p.id} shipped, Shopify fulfilment ${fid} created`);
     redirectMsg(res, `/purchase-orders/${p.id}`, 'ok', 'Tracking saved and order marked fulfilled on Shopify.');
   } catch (e) {
-    updatePurchaseOrder(p.id, { tracking_number: req.body.tracking_number, tracking_company: req.body.tracking_company || null, tracking_url: req.body.tracking_url || null });
+    await updatePurchaseOrder(p.id, { tracking_number: req.body.tracking_number, tracking_company: req.body.tracking_company || null, tracking_url: req.body.tracking_url || null });
     redirectMsg(res, `/purchase-orders/${p.id}`, 'err', `Tracking saved locally but Shopify fulfilment failed: ${e.message}`);
   }
 });
 
-router.post('/purchase-orders/:id/status', (req, res) => {
+router.post('/purchase-orders/:id/status', async (req, res) => {
   const status = ['delivered', 'cancelled', 'pending'].includes(req.body.status) ? req.body.status : null;
   if (!status) return redirectMsg(res, `/purchase-orders/${req.params.id}`, 'err', 'Bad status');
-  updatePurchaseOrder(req.params.id, { status });
+  await updatePurchaseOrder(req.params.id, { status });
   redirectMsg(res, `/purchase-orders/${req.params.id}`, 'ok', `Marked ${status}.`);
 });
 
 router.post('/purchase-orders/:id/auto-order', async (req, res) => {
-  const p = getPurchaseOrder(req.params.id);
-  const product = p?.product_id ? getProduct(p.product_id) : null;
+  const p = await getPurchaseOrder(req.params.id);
+  const product = p?.product_id ? await getProduct(p.product_id) : null;
   const adapter = product ? getAdapter(product.provider) : null;
   if (!p || !product || !adapter) return redirectMsg(res, `/purchase-orders/${req.params.id}`, 'err', 'No supplier product mapped');
   if (!adapter.supportsAutomaticPurchasing) return redirectMsg(res, `/purchase-orders/${p.id}`, 'err', `${adapter.supplierId} does not support automatic purchasing.`);
@@ -162,21 +162,21 @@ router.post('/purchase-orders/:id/auto-order', async (req, res) => {
       lines: [{ supplierVariantId: encodeVariantId(product.source_product_id, p.supplier_sku_attr || ''), quantity: p.quantity, expectedUnitCost: { amount: Number(p.supplier_unit_cost || 0), currency: p.supplier_currency || 'USD' } }],
     });
     if (result.status === 'REJECTED') return redirectMsg(res, `/purchase-orders/${p.id}`, 'err', `Supplier refused the order: ${result.message}`);
-    updatePurchaseOrder(p.id, { status: 'ordered', supplier_order_ref: result.supplierOrderId, supplier_paid_at: new Date().toISOString(), notes: result.message || `Placed via ${adapter.supplierId}` });
-    logEvent('supplier.auto_ordered', `PO-${p.id}: ${adapter.supplierId} order ${result.supplierOrderId}`);
+    await updatePurchaseOrder(p.id, { status: 'ordered', supplier_order_ref: result.supplierOrderId, supplier_paid_at: new Date().toISOString(), notes: result.message || `Placed via ${adapter.supplierId}` });
+    await logEvent('supplier.auto_ordered', `PO-${p.id}: ${adapter.supplierId} order ${result.supplierOrderId}`);
     redirectMsg(res, `/purchase-orders/${p.id}`, 'ok', `${adapter.supplierId} order ${result.supplierOrderId} placed (${result.status}).`);
   } catch (e) { redirectMsg(res, `/purchase-orders/${p.id}`, 'err', e.message); }
 });
 
 router.post('/purchase-orders/:id/fetch-tracking', async (req, res) => {
-  const p = getPurchaseOrder(req.params.id);
-  const product = p?.product_id ? getProduct(p.product_id) : null;
+  const p = await getPurchaseOrder(req.params.id);
+  const product = p?.product_id ? await getProduct(p.product_id) : null;
   const adapter = product ? getAdapter(product.provider) : null;
   if (!p?.supplier_order_ref || !adapter) return redirectMsg(res, `/purchase-orders/${req.params.id}`, 'err', 'No supplier order reference');
   try {
     const t = (await adapter.getTracking(p.supplier_order_ref)).find((x) => x.trackingNumber);
     if (!t) return redirectMsg(res, `/purchase-orders/${p.id}`, 'err', 'The supplier has no tracking number yet.');
-    updatePurchaseOrder(p.id, { tracking_number: t.trackingNumber, tracking_company: t.carrier || null, tracking_url: t.trackingUrl || null });
+    await updatePurchaseOrder(p.id, { tracking_number: t.trackingNumber, tracking_company: t.carrier || null, tracking_url: t.trackingUrl || null });
     redirectMsg(res, `/purchase-orders/${p.id}`, 'ok', `Tracking ${t.trackingNumber} fetched. Click "Save tracking & mark shipped" to notify the customer.`);
   } catch (e) { redirectMsg(res, `/purchase-orders/${p.id}`, 'err', e.message); }
 });

@@ -27,7 +27,13 @@ export const config = {
   port: num(process.env.PORT, 3000),
   appUrl: (process.env.APP_URL || '').replace(/\/+$/, ''),
   adminPassword: process.env.ADMIN_PASSWORD || '',
-  databasePath: process.env.DATABASE_PATH || './data/dropship.sqlite',
+  database: {
+    // Neon Postgres connection string (Vercel Marketplace "Neon" sets DATABASE_URL). Empty = embedded PGlite in DATABASE_PATH.
+    url: process.env.DATABASE_URL || process.env.POSTGRES_URL || '',
+    path: process.env.DATABASE_PATH || './data/pg',
+    poolMax: num(process.env.PG_POOL_MAX, process.env.VERCEL ? 1 : 5),
+  },
+  cronSecret: process.env.CRON_SECRET || '',
   shopify: {
     domain: process.env.SHOPIFY_STORE_DOMAIN || '',
     token: process.env.SHOPIFY_ADMIN_TOKEN || '',

@@ -15,7 +15,7 @@ ships. With the AliExpress Dropshipping API it can even place and pay the suppli
                                              Tracking → Shopify fulfilment → customer notified
 ```
 
-No database server, no build step: Node.js 22+, Express and the SQLite that ships with Node.
+No build step and nothing to install besides Node.js 22+: locally the app embeds Postgres (PGlite); on Vercel it uses Neon.
 
 ---
 
@@ -39,14 +39,43 @@ of your products and supplier orders, holds your Shopify secret key, and must be
 
 | Option | Cost | Good for |
 |--------|------|----------|
+| **Vercel + Neon** (config included) | free | one‑click deploy from GitHub, always on, Postgres database hosted by Neon. Recommended start. |
 | **Your own laptop** + a tunnel | free | trying it out, importing products. Orders only arrive while the laptop is on. |
-| **Fly.io** (config included) | free allowance | always‑on hosting with persistent storage, closest region Paris. Recommended start. |
+| **Fly.io** (config included) | free allowance | always‑on hosting with the embedded database on a disk volume (or set `DATABASE_URL` to Neon), region Paris. |
 | **Small VPS** with Docker (Hetzner, Contabo, OVH… ~€4/month) | cheap | full control, your own domain. |
 
 Render.com also works (`render.yaml` included) but its free plan has no persistent disk, so your data is wiped
-at each deploy; use it only on a paid instance.
+at each deploy; use it only on a paid instance. GitHub Pages cannot host it at all (static files only).
 
-### A. On your laptop (Windows, macOS or Linux)
+### A. Publish on Vercel (from GitHub, no terminal needed)
+
+Vercel runs the app as serverless functions. Its disk is wiped at every deploy, so the database lives in
+**Neon** (hosted PostgreSQL, free tier), which Vercel installs for you from its Marketplace.
+
+1. Go to https://vercel.com, sign up **with your GitHub account**, then **Add New… → Project** and import the
+   repository `wouapit999/wouapit999`.
+2. In the import screen set **Root Directory** to `dropship` (click *Edit* next to it). Framework preset:
+   *Other*. Leave build settings as detected (the `vercel.json` in the folder takes care of routing).
+3. Open **Environment Variables** on the same screen and add:
+   `ADMIN_PASSWORD`, `SHOPIFY_STORE_DOMAIN`, `SHOPIFY_ADMIN_TOKEN`, `SHOPIFY_API_SECRET`,
+   `CRON_SECRET` (any long random text), `NODEJS_HELPERS` = `0` (keeps the raw webhook body so Shopify
+   signatures can be verified). Click **Deploy**.
+4. Add the database: project → **Storage** tab → **Create Database → Neon** (Postgres) → free plan → region
+   *Frankfurt* or *Paris* → connect it to the project. This injects `DATABASE_URL` (and `POSTGRES_URL`).
+   The tables are created automatically on the first request.
+   (Alternative: create a project at https://console.neon.tech, copy the **pooled** connection string and add it
+   as `DATABASE_URL` by hand.)
+5. Project → **Settings → Environment Variables**: add `APP_URL` = your Vercel URL, e.g.
+   `https://wouapit999.vercel.app` (shown on the project page; you can add your own domain later).
+6. **Deployments → ⋯ → Redeploy** so the new variables are picked up. Open the URL, log in
+   (`admin` / your password), then **Settings → Test connection** and **Register webhooks**.
+
+Every `git push` to the production branch redeploys automatically. The daily supplier price sync runs through
+Vercel Cron (`vercel.json`, 05:00 UTC); it calls `/cron/sync-prices` with your `CRON_SECRET`.
+Vercel's production branch defaults to `main`; if the code is on another branch, set it under
+**Settings → Git → Production Branch** or merge the branch into `main`.
+
+### B. On your laptop (Windows, macOS or Linux)
 
 1. Install **Node.js 22 or newer** from https://nodejs.org (LTS installer) and **Git** from https://git-scm.com.
 2. Open a terminal (PowerShell on Windows) and run:
@@ -72,7 +101,7 @@ at each deploy; use it only on a paid instance.
    click **Register webhooks** in Settings. (ngrok works the same way.) The URL changes at each restart, so this
    is for testing; use option B or C for real sales.
 
-### B. Free always‑on hosting on Fly.io (recommended)
+### C. Always‑on hosting on Fly.io
 
 ```bash
 # once: install flyctl from https://fly.io/docs/flyctl/install and create a free account
@@ -86,7 +115,7 @@ fly deploy
 Your admin interface is then at `https://<your-app-name>.fly.dev`. Go to Settings → **Register webhooks**.
 Redeploy after code updates with `git pull && fly deploy`; the database on the volume is kept.
 
-### C. Docker on a VPS
+### D. Docker on a VPS
 
 ```bash
 git clone https://github.com/wouapit999/wouapit999.git && cd wouapit999/dropship
@@ -94,7 +123,7 @@ cp .env.example .env && nano .env            # APP_URL=https://shop-admin.yourdo
 docker compose up -d                          # app on port 3000, data in a Docker volume
 ```
 Put Caddy or Nginx in front for HTTPS (Caddy: `reverse_proxy localhost:3000` with your domain), point your DNS
-at the server, then register the webhooks from Settings.
+at the server, then register the webhooks from Settings. Set `DATABASE_URL` in `.env` to use Neon instead of the embedded database.
 
 ### First steps in the interface
 
@@ -177,7 +206,8 @@ src/pricing.js           pricing engine (pure functions, unit‑tested)
 src/shopify.js           Admin GraphQL: productSet, publish, price updates, webhooks, fulfilments
 src/webhooks.js          HMAC verification, orders/paid → purchase orders, optional auto‑order
 src/sync.js              recompute prices, refresh from supplier, push to Shopify
-src/db.js                SQLite schema + queries (data/dropship.sqlite — back this folder up)
+src/db.js                Postgres schema + queries: Neon via DATABASE_URL, or embedded PGlite in data/ when unset
+api/index.js, vercel.json Vercel serverless entry point, routing, cron
 src/scripts/             register-webhooks, sync-prices, update-fx
 test/                    `npm test`   ·   `npm run typecheck` verifies the adapters against the TypeScript contract
 ```

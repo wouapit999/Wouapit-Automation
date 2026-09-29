@@ -1,4 +1,4 @@
 import { getDb } from '../db.js';
 import { refreshFxRates } from '../fx.js';
-getDb();
+await getDb();
 console.log(await refreshFxRates());

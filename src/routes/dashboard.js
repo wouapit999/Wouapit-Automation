@@ -6,10 +6,10 @@ import { layout, esc, attr, statusBadge } from '../util/html.js';
 
 export const router = Router();
 
-router.get('/', (req, res) => {
-  const s = dashboardStats();
-  const pending = listPurchaseOrders({ status: 'pending' }).slice(0, 10);
-  const events = recentEvents(8);
+router.get('/', async (req, res) => {
+  const s = await dashboardStats();
+  const pending = (await listPurchaseOrders({ status: 'pending' })).slice(0, 10);
+  const events = await recentEvents(8);
   const setup = [];
   if (!config.shopify.domain || !config.shopify.token) setup.push('Add your Shopify store domain and Admin API token in <code>.env</code>.');
   if (!config.shopify.apiSecret) setup.push('Add <code>SHOPIFY_API_SECRET</code> so order webhooks can be verified.');

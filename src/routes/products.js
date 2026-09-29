@@ -14,7 +14,7 @@ const redirectMsg = (res, path, type, message) => res.redirect(`${path}?${type}=
 const flashFrom = (q) => (q.ok ? { type: 'ok', message: q.ok } : q.err ? { type: 'err', message: q.err } : q.warn ? { type: 'warn', message: q.warn } : null);
 
 // ---------- import ----------
-router.get('/import', (req, res) => {
+router.get('/import', async (req, res) => {
   res.send(layout({ title: 'Import product', active: '/import', flash: flashFrom(req.query), body: `
   <h1>Import a supplier product</h1>
   <div class="card">
@@ -32,11 +32,11 @@ router.post('/import', async (req, res) => {
   try {
     const adapter = adapterForUrl(String(req.body.url || '').trim());
     const imported = adapter ? (await adapter.getProduct(String(req.body.url).trim())).internal : await importFromUrl(req.body.url);
-    priceProduct(imported);
+    await priceProduct(imported);
     imported.pricing.importWarnings = imported.warnings || [];
     imported.pricing.confidence = imported.confidence;
-    const id = insertProduct({ ...imported, status: 'draft' });
-    logEvent('product.imported', `Imported "${imported.title || imported.source_url}" from ${imported.provider}`, { id });
+    const id = await insertProduct({ ...imported, status: 'draft' });
+    await logEvent('product.imported', `Imported "${imported.title || imported.source_url}" from ${imported.provider}`, { id });
     res.redirect(`/products/${id}`);
   } catch (e) {
     redirectMsg(res, '/import', 'err', `Import failed: ${e.message}`);
@@ -44,8 +44,8 @@ router.post('/import', async (req, res) => {
 });
 
 // ---------- list ----------
-router.get('/products', (req, res) => {
-  const products = listProducts();
+router.get('/products', async (req, res) => {
+  const products = await listProducts();
   const rows = products.map((p) => {
     const prices = p.variants.map((v) => v.sellingPriceXaf).filter(Boolean);
     const min = prices.length ? Math.min(...prices) : null, max = prices.length ? Math.max(...prices) : null;
@@ -62,11 +62,11 @@ router.get('/products', (req, res) => {
 });
 
 // ---------- review / edit ----------
-router.get('/products/:id', (req, res) => {
-  const p = getProduct(req.params.id);
+router.get('/products/:id', async (req, res) => {
+  const p = await getProduct(req.params.id);
   if (!p) return res.status(404).send('Not found');
-  const rules = effectiveRules(p);
-  const fx = getFxRates();
+  const rules = await effectiveRules(p);
+  const fx = await getFxRates();
   const eta = deliveryEstimateDays(p.conditions, rules);
   const warnings = (p.pricing.importWarnings || []).map((w) => `<div class="flash warn">${esc(w)}</div>`).join('');
   const ov = p.pricing.overrides || {};
@@ -168,25 +168,25 @@ function applyForm(p, body) {
 }
 
 router.post('/products/:id', async (req, res) => {
-  const p = getProduct(req.params.id);
+  const p = await getProduct(req.params.id);
   if (!p) return res.status(404).send('Not found');
   try {
     applyForm(p, req.body);
     if (!p.title) throw new Error('Title is required');
     if (!p.variants.length) throw new Error('Keep at least one variant');
-    priceProduct(p);
-    updateProduct(p.id, { title: p.title, description_html: p.description_html, images: p.images, variants: p.variants, conditions: p.conditions, pricing: p.pricing });
+    await priceProduct(p);
+    await updateProduct(p.id, { title: p.title, description_html: p.description_html, images: p.images, variants: p.variants, conditions: p.conditions, pricing: p.pricing });
     if (req.body.action !== 'publish') return redirectMsg(res, `/products/${p.id}`, 'ok', 'Saved. Prices recomputed.');
     await publish(p);
     return redirectMsg(res, `/products/${p.id}`, 'ok', p.shopify_product_id ? 'Product published to Shopify.' : 'Saved.');
   } catch (e) {
-    updateProduct(p.id, { last_error: e.message });
+    await updateProduct(p.id, { last_error: e.message });
     return redirectMsg(res, `/products/${p.id}`, 'err', e.message);
   }
 });
 
 async function publish(p) {
-  const rules = effectiveRules(p);
+  const rules = await effectiveRules(p);
   const bad = p.variants.filter((v) => !(v.sellingPriceXaf > 0));
   if (bad.length) throw new Error(`Variant "${bad[0].title}" has no selling price. Check the supplier price and currency.`);
   const result = await shopify.upsertProduct(p, { rules });
@@ -197,10 +197,10 @@ async function publish(p) {
     if (m) v.shopifyVariantId = m.id;
   }
   let published = false;
-  try { published = await shopify.publishToOnlineStore(result.productId); } catch (e) { logEvent('shopify.publish_channel', `Could not add to Online Store channel automatically (${e.message}). Do it in Shopify admin if the product is not visible.`, null, 'warn'); }
-  updateProduct(p.id, { shopify_product_id: result.productId, shopify_handle: result.handle, variants: p.variants, status: 'published', last_error: null });
+  try { published = await shopify.publishToOnlineStore(result.productId); } catch (e) { await logEvent('shopify.publish_channel', `Could not add to Online Store channel automatically (${e.message}). Do it in Shopify admin if the product is not visible.`, null, 'warn'); }
+  await updateProduct(p.id, { shopify_product_id: result.productId, shopify_handle: result.handle, variants: p.variants, status: 'published', last_error: null });
   p.shopify_product_id = result.productId;
-  logEvent('product.published', `Published "${p.title}" to Shopify (product ${result.productId}${published ? ', Online Store' : ''})`);
+  await logEvent('product.published', `Published "${p.title}" to Shopify (product ${result.productId}${published ? ', Online Store' : ''})`);
 }
 
 router.post('/products/:id/refresh', async (req, res) => {
@@ -212,15 +212,15 @@ router.post('/products/:id/refresh', async (req, res) => {
 });
 
 router.post('/products/:id/archive', async (req, res) => {
-  const p = getProduct(req.params.id);
+  const p = await getProduct(req.params.id);
   try {
     if (p?.shopify_product_id) await shopify.setProductStatus(p.shopify_product_id, 'ARCHIVED');
-    updateProduct(req.params.id, { status: 'archived' });
+    await updateProduct(req.params.id, { status: 'archived' });
     redirectMsg(res, `/products/${req.params.id}`, 'ok', 'Archived on Shopify.');
   } catch (e) { redirectMsg(res, `/products/${req.params.id}`, 'err', e.message); }
 });
 
-router.post('/products/:id/delete', (req, res) => {
-  deleteProduct(req.params.id);
+router.post('/products/:id/delete', async (req, res) => {
+  await deleteProduct(req.params.id);
   redirectMsg(res, '/products', 'ok', 'Product deleted from the app.');
 });

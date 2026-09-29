@@ -25,11 +25,11 @@ const RULE_HELP = {
   extraLeadTimeDays: 'Safety buffer added to delivery estimate (days)',
 };
 
-router.get('/settings', (req, res) => {
-  const rules = getPricingRules();
-  const fx = getFxRates();
+router.get('/settings', async (req, res) => {
+  const rules = await getPricingRules();
+  const fx = await getFxRates();
   const sample = computePrice({ supplierPrice: 10, supplierCurrency: 'USD', supplierShipping: 3 }, rules, fx);
-  const events = recentEvents(25);
+  const events = await recentEvents(25);
   res.send(layout({ title: 'Settings', active: '/settings', flash: flashFrom(req.query), body: `
   <h1>Settings</h1>
   <div class="card"><h2>Pricing rules</h2>
@@ -39,7 +39,7 @@ router.get('/settings', (req, res) => {
       <div class="actions"><button type="submit">Save pricing rules</button></div>
     </form>
   </div>
-  <div class="card"><h2>Exchange rates → XAF <span class="muted small">(last update: ${esc(getSetting('fxUpdatedAt', 'never'))})</span></h2>
+  <div class="card"><h2>Exchange rates → XAF <span class="muted small">(last update: ${esc(await getSetting('fxUpdatedAt', 'never'))})</span></h2>
     <form method="post" action="/settings/fx">
       <div class="row">${Object.entries(fx).map(([k, v]) => `<div><label><b>1 ${k}</b> = … XAF</label><input type="number" step="any" name="${k}" value="${attr(v)}" ${k === 'XAF' || k === 'EUR' ? 'readonly' : ''}></div>`).join('')}
       <div><label><b>Add currency</b> (code, e.g. CNY)</label><input type="text" name="_newCode" placeholder="CODE"><input type="number" step="any" name="_newRate" placeholder="rate" style="margin-top:4px"></div></div>
@@ -63,14 +63,14 @@ router.get('/settings', (req, res) => {
   </div>` }));
 });
 
-router.post('/settings/pricing', (req, res) => {
-  savePricingRules(req.body);
+router.post('/settings/pricing', async (req, res) => {
+  await savePricingRules(req.body);
   redirectMsg(res, '/settings', 'ok', 'Pricing rules saved. Use "Save & recompute" on a product, or "Sync all published", to apply.');
 });
-router.post('/settings/fx', (req, res) => {
+router.post('/settings/fx', async (req, res) => {
   const { _newCode, _newRate, ...rates } = req.body;
   if (_newCode && _newRate) rates[String(_newCode).toUpperCase()] = _newRate;
-  saveFxRates(rates);
+  await saveFxRates(rates);
   redirectMsg(res, '/settings', 'ok', 'Exchange rates saved.');
 });
 router.post('/settings/fx/refresh', async (req, res) => {
@@ -85,7 +85,7 @@ router.post('/settings/shopify/webhooks', async (req, res) => {
   try {
     if (!config.appUrl) throw new Error('Set APP_URL in .env to your public https URL first');
     const r = await shopify.registerWebhooks(config.appUrl);
-    logEvent('webhooks.registered', r.map((x) => `${x.topic}: ${x.status}`).join(', '));
+    await logEvent('webhooks.registered', r.map((x) => `${x.topic}: ${x.status}`).join(', '));
     redirectMsg(res, '/settings', 'ok', r.map((x) => `${x.topic}: ${x.status}`).join(' · '));
   } catch (e) { redirectMsg(res, '/settings', 'err', e.message); }
 });

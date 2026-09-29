@@ -1,10 +1,10 @@
 import { getSetting, setSetting, logEvent } from './db.js';
 import { DEFAULT_FX_RATES, DEFAULT_PRICING_RULES } from './pricing.js';
 
-export function getFxRates() {
-  return { ...DEFAULT_FX_RATES, ...(getSetting('fxRates', {}) || {}) };
+export async function getFxRates() {
+  return { ...DEFAULT_FX_RATES, ...(await getSetting('fxRates', {}) || {}) };
 }
-export function saveFxRates(rates) {
+export async function saveFxRates(rates) {
   const clean = {};
   for (const [k, v] of Object.entries(rates || {})) {
     const n = Number(v);
@@ -12,20 +12,20 @@ export function saveFxRates(rates) {
   }
   clean.XAF = 1;
   clean.EUR = 655.957; // fixed peg
-  setSetting('fxRates', clean);
+  await setSetting('fxRates', clean);
   return clean;
 }
-export function getPricingRules() {
-  return { ...DEFAULT_PRICING_RULES, ...(getSetting('pricingRules', {}) || {}) };
+export async function getPricingRules() {
+  return { ...DEFAULT_PRICING_RULES, ...(await getSetting('pricingRules', {}) || {}) };
 }
-export function savePricingRules(rules) {
+export async function savePricingRules(rules) {
   const clean = {};
   for (const k of Object.keys(DEFAULT_PRICING_RULES)) {
     if (rules[k] === undefined || rules[k] === '') continue;
     const n = Number(rules[k]);
     if (!Number.isNaN(n)) clean[k] = n;
   }
-  setSetting('pricingRules', clean);
+  await setSetting('pricingRules', clean);
   return { ...DEFAULT_PRICING_RULES, ...clean };
 }
 
@@ -41,8 +41,8 @@ export async function refreshFxRates(fetchImpl = fetch) {
     const perEur = data.rates[cur];
     if (perEur) out[cur] = Math.round((xafPerEur / perEur) * 1000) / 1000;
   }
-  const saved = saveFxRates(out);
-  setSetting('fxUpdatedAt', new Date().toISOString());
-  logEvent('fx.refresh', `FX rates refreshed: 1 USD = ${saved.USD} XAF, 1 CNY = ${saved.CNY} XAF`);
+  const saved = await saveFxRates(out);
+  await setSetting('fxUpdatedAt', new Date().toISOString());
+  await logEvent('fx.refresh', `FX rates refreshed: 1 USD = ${saved.USD} XAF, 1 CNY = ${saved.CNY} XAF`);
   return saved;
 }

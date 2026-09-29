@@ -14,13 +14,16 @@
     "webhooks:register": "node --no-warnings=ExperimentalWarning src/scripts/register-webhooks.js",
     "prices:sync": "node --no-warnings=ExperimentalWarning src/scripts/sync-prices.js",
     "fx:update": "node --no-warnings=ExperimentalWarning src/scripts/update-fx.js",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "vercel-build": "echo \"no build step\""
   },
   "dependencies": {
-    "express": "^4.21.2"
+    "@electric-sql/pglite": "^0.3.16",
+    "express": "^5.1.0",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
-    "typescript": "^5.6.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
   }
 }

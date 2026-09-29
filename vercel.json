@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "npm ci --omit=dev",
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }],
+  "functions": { "api/index.js": { "maxDuration": 60, "memory": 1024 } },
+  "crons": [{ "path": "/cron/sync-prices", "schedule": "0 5 * * *" }]
+}

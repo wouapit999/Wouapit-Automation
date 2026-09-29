@@ -1,5 +1,5 @@
-# Render.com blueprint. Note: a persistent disk requires a paid instance; on the free plan the SQLite
-# database is wiped at every deploy/restart. Fly.io or a small VPS keep your data for free/cheaper.
+# Render.com blueprint. With DATABASE_URL set to Neon no disk is needed and the free plan works;
+# without it the embedded database needs the persistent disk below (paid instance).
 services:
   - type: web
     name: cm-dropship
@@ -12,7 +12,7 @@ services:
       sizeGB: 1
     envVars:
       - key: DATABASE_PATH
-        value: /app/data/dropship.sqlite
+        value: /app/data/pg
       - key: ADMIN_PASSWORD
         sync: false
       - key: APP_URL

@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { config } from './config.js';
-import { getDb, logEvent, webhookSeen, getOrderByShopifyId, insertOrder, insertPurchaseOrder, updatePurchaseOrder, getProductByShopifyId, listPurchaseOrders } from './db.js';
+import { logEvent, updateOrderStatus, webhookSeen, getOrderByShopifyId, insertOrder, insertPurchaseOrder, updatePurchaseOrder, getProductByShopifyId, listPurchaseOrders } from './db.js';
 import { getFxRates } from './fx.js';
 import { toXaf } from './pricing.js';
 import { getAdapter } from './suppliers/registry.js';
@@ -18,28 +18,35 @@ export function verifyShopifyHmac(rawBody, headerHmac, secret = config.shopify.a
 export async function handleShopifyWebhook(req, res) {
   const topic = req.get('x-shopify-topic') || '';
   const webhookId = req.get('x-shopify-webhook-id');
-  if (!verifyShopifyHmac(req.body, req.get('x-shopify-hmac-sha256'))) {
-    logEvent('webhook.rejected', `Invalid HMAC for ${topic}`, null, 'warn');
+  // Raw bytes are required for the HMAC. On Vercel set NODEJS_HELPERS=0 so the body is not pre-parsed;
+  // if it was parsed anyway we re-serialise it (works for Shopify's compact JSON) and log a warning.
+  let raw = req.body;
+  if (!Buffer.isBuffer(raw)) {
+    raw = Buffer.from(typeof raw === 'string' ? raw : JSON.stringify(raw ?? ''));
+    console.warn('Webhook body was pre-parsed by the platform; set NODEJS_HELPERS=0 on Vercel for exact signature checks.');
+  }
+  if (!verifyShopifyHmac(raw, req.get('x-shopify-hmac-sha256'))) {
+    await logEvent('webhook.rejected', `Invalid HMAC for ${topic}`, null, 'warn');
     return res.status(401).send('invalid hmac');
   }
   res.status(200).send('ok'); // respond fast; Shopify retries on timeouts
-  if (webhookSeen(webhookId)) return;
+  if (await webhookSeen(webhookId)) return;
   let payload;
-  try { payload = JSON.parse(req.body.toString('utf8')); } catch { return logEvent('webhook.bad_json', topic, null, 'error'); }
+  try { payload = JSON.parse(req.body.toString('utf8')); } catch { return await logEvent('webhook.bad_json', topic, null, 'error'); }
   try {
     if (topic === 'orders/paid') await processPaidOrder(payload);
     else if (topic === 'orders/cancelled') await processCancelledOrder(payload);
-    else logEvent('webhook.ignored', `Ignored topic ${topic}`);
+    else await logEvent('webhook.ignored', `Ignored topic ${topic}`);
   } catch (e) {
-    logEvent('webhook.error', `${topic}: ${e.message}`, { stack: e.stack }, 'error');
+    await logEvent('webhook.error', `${topic}: ${e.message}`, { stack: e.stack }, 'error');
   }
 }
 
 /** Turn a paid Shopify order into purchase orders (what to buy from which supplier, and what you owe). */
 export async function processPaidOrder(order) {
-  if (getOrderByShopifyId(order.id)) return logEvent('order.duplicate', `Order ${order.name} already recorded`);
-  const fx = getFxRates();
-  const orderId = insertOrder({
+  if (await getOrderByShopifyId(order.id)) return await logEvent('order.duplicate', `Order ${order.name} already recorded`);
+  const fx = await getFxRates();
+  const orderId = await insertOrder({
     shopify_order_id: order.id,
     order_number: order.name || String(order.order_number || order.id),
     customer: { name: `${order.customer?.first_name ?? ''} ${order.customer?.last_name ?? ''}`.trim(), email: order.email || order.contact_email, phone: order.phone || order.customer?.phone || order.shipping_address?.phone },
@@ -52,7 +59,7 @@ export async function processPaidOrder(order) {
 
   const created = [];
   for (const li of order.line_items || []) {
-    const product = li.product_id ? getProductByShopifyId(li.product_id) : null;
+    const product = li.product_id ? await getProductByShopifyId(li.product_id) : null;
     const variant = product?.variants.find((v) => String(v.shopifyVariantId) === String(li.variant_id))
       || product?.variants.find((v) => v.sku && v.sku === li.sku)
       || product?.variants[0];
@@ -62,7 +69,7 @@ export async function processPaidOrder(order) {
       const total = (Number(variant.supplierPrice || 0) + Number(variant.supplierShipping || 0)) * qty;
       try { supplierTotalXaf = Math.round(toXaf(total, variant.supplierCurrency, fx)); } catch { /* unknown currency */ }
     }
-    const poId = insertPurchaseOrder({
+    const poId = await insertPurchaseOrder({
       order_id: orderId,
       product_id: product?.id ?? null,
       shopify_line_item_id: li.id,
@@ -82,7 +89,7 @@ export async function processPaidOrder(order) {
     });
     created.push({ poId, product, variant, qty, li });
   }
-  logEvent('order.received', `Paid order ${order.name}: ${created.length} line(s) → purchase orders created`, { orderId, shopify_order_id: order.id });
+  await logEvent('order.received', `Paid order ${order.name}: ${created.length} line(s) → purchase orders created`, { orderId, shopify_order_id: order.id });
 
   // Optional: place the supplier order automatically through the supplier adapter (AliExpress DS API).
   if (config.aliexpress.autoOrder) await autoPurchase(order, created);
@@ -111,23 +118,23 @@ export async function autoPurchase(order, created) {
       })),
     });
     if (result.status === 'REJECTED') {
-      logEvent('supplier.auto_order_failed', `${adapter.supplierId} refused order for ${order.name}: ${result.message}. Left as pending for manual purchase.`, null, 'error');
+      await logEvent('supplier.auto_order_failed', `${adapter.supplierId} refused order for ${order.name}: ${result.message}. Left as pending for manual purchase.`, null, 'error');
       continue;
     }
     for (const c of lines) {
-      updatePurchaseOrder(c.poId, { status: 'ordered', supplier_order_ref: result.supplierOrderId, supplier_paid_at: new Date().toISOString(), notes: result.message || `Placed automatically via ${adapter.supplierId}` });
+      await updatePurchaseOrder(c.poId, { status: 'ordered', supplier_order_ref: result.supplierOrderId, supplier_paid_at: new Date().toISOString(), notes: result.message || `Placed automatically via ${adapter.supplierId}` });
     }
-    logEvent('supplier.auto_ordered', `${adapter.supplierId} order ${result.supplierOrderId} placed for ${order.name} (${result.status})`);
+    await logEvent('supplier.auto_ordered', `${adapter.supplierId} order ${result.supplierOrderId} placed for ${order.name} (${result.status})`);
   }
 }
 
 
 export async function processCancelledOrder(order) {
-  const local = getOrderByShopifyId(order.id);
+  const local = await getOrderByShopifyId(order.id);
   if (!local) return;
-  getDb().prepare("UPDATE orders SET financial_status = ? WHERE id = ?").run(order.financial_status || 'cancelled', local.id);
-  for (const po of listPurchaseOrders({ orderId: local.id })) {
-    if (po.status === 'pending') updatePurchaseOrder(po.id, { status: 'cancelled', notes: 'Shopify order cancelled before supplier purchase' });
+  await updateOrderStatus(local.id, order.financial_status || 'cancelled');
+  for (const po of await listPurchaseOrders({ orderId: local.id })) {
+    if (po.status === 'pending') await updatePurchaseOrder(po.id, { status: 'cancelled', notes: 'Shopify order cancelled before supplier purchase' });
   }
-  logEvent('order.cancelled', `Order ${order.name} cancelled; pending supplier orders cancelled. Check any already-ordered lines manually.`, null, 'warn');
+  await logEvent('order.cancelled', `Order ${order.name} cancelled; pending supplier orders cancelled. Check any already-ordered lines manually.`, null, 'warn');
 }

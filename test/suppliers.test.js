@@ -1,19 +1,20 @@
-import { test, before } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-process.env.DATABASE_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'cmd-sup-')), 'test.sqlite');
+process.env.DATABASE_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'cmd-sup-')), 'pg');
 process.env.ADMIN_PASSWORD = 'pw';
 process.env.ALIEXPRESS_APP_KEY = 'k'; process.env.ALIEXPRESS_APP_SECRET = 's'; process.env.ALIEXPRESS_ACCESS_TOKEN = 't';
 
 const { encodeVariantId, decodeVariantId, toSupplierProduct, toSupplierAddress, UnsupportedOperationError } = await import('../src/suppliers/common.js');
 const { getAdapter, adapterForUrl, listAdapters } = await import('../src/suppliers/registry.js');
 const { AliExpressAdapter } = await import('../src/suppliers/aliexpress-adapter.js');
-const { getDb, getPurchaseRequest } = await import('../src/db.js');
+const { getDb, getPurchaseRequest, closeDb } = await import('../src/db.js');
 
-before(() => getDb());
+before(async () => { await getDb(); });
+after(async () => { await closeDb(); });
 
 test('variant ids round-trip and tolerate colons in sku attrs', () => {
   const id = encodeVariantId('1005', '14:29#Red;5:100014064');
@@ -69,7 +70,7 @@ test('AliExpress createPurchaseOrder is idempotent and records rejections', asyn
   const r2 = await adapter.createPurchaseOrder(req);
   assert.deepEqual(r2, r1);
   assert.equal(calls, 1, 'second call with the same idempotency key must not place a second paid order');
-  assert.equal(getPurchaseRequest('shopify:42:aliexpress').supplierOrderId, '800123');
+  assert.equal((await getPurchaseRequest('shopify:42:aliexpress')).supplierOrderId, '800123');
 
   placeOrder = async () => { throw new Error('insufficient balance'); };
   const r3 = await adapter.createPurchaseOrder({ ...req, idempotencyKey: 'po:9' });

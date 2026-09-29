@@ -7,7 +7,7 @@ primary_region = "cdg"       # Paris: closest region to Cameroon
 
 [env]
   PORT = "3000"
-  DATABASE_PATH = "/app/data/dropship.sqlite"
+  DATABASE_PATH = "/app/data/pg"
 
 [[mounts]]
   source = "dropship_data"

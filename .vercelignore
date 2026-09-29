@@ -1,0 +1,5 @@
+data
+docs
+test
+.env
+*.log
