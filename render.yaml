@@ -1,0 +1,25 @@
+# Render.com blueprint. Note: a persistent disk requires a paid instance; on the free plan the SQLite
+# database is wiped at every deploy/restart. Fly.io or a small VPS keep your data for free/cheaper.
+services:
+  - type: web
+    name: cm-dropship
+    runtime: docker
+    plan: starter
+    healthCheckPath: /healthz
+    disk:
+      name: dropship-data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      - key: DATABASE_PATH
+        value: /app/data/dropship.sqlite
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: SHOPIFY_STORE_DOMAIN
+        sync: false
+      - key: SHOPIFY_ADMIN_TOKEN
+        sync: false
+      - key: SHOPIFY_API_SECRET
+        sync: false

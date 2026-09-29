@@ -1,0 +1,26 @@
+# Fly.io (free allowance covers this app):  fly launch --copy-config --no-deploy ; fly volumes create dropship_data -s 1 ; fly secrets set ... ; fly deploy
+app = "cm-dropship"          # change to a unique name; your URL becomes https://<name>.fly.dev
+primary_region = "cdg"       # Paris: closest region to Cameroon
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3000"
+  DATABASE_PATH = "/app/data/dropship.sqlite"
+
+[[mounts]]
+  source = "dropship_data"
+  destination = "/app/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[http_service.checks]]
+  path = "/healthz"
+  interval = "30s"
+  timeout = "5s"
