@@ -11,9 +11,9 @@ router.get('/', async (req, res) => {
   const pending = (await listPurchaseOrders({ status: 'pending' })).slice(0, 10);
   const events = await recentEvents(8);
   const setup = [];
-  if (!config.shopify.domain || !config.shopify.token) setup.push('Add your Shopify store domain and Admin API token in <code>.env</code>.');
-  if (!config.shopify.apiSecret) setup.push('Add <code>SHOPIFY_API_SECRET</code> so order webhooks can be verified.');
-  if (!config.appUrl) setup.push('Set <code>APP_URL</code> (public https URL) and register webhooks in Settings so paid orders flow in.');
+  if (!config.shopify.domain || !config.shopify.token) setup.push('Enter your Shopify store domain and Admin API token in <a href="/settings">Settings → Connections</a>.');
+  if (!config.shopify.apiSecret) setup.push('Enter the Shopify API secret key in <a href="/settings">Settings</a> so order webhooks can be verified.');
+  if (!config.appUrl) setup.push('Enter the public URL of this app in <a href="/settings">Settings</a> and register the webhooks so paid orders flow in.');
   res.send(layout({ title: 'Dashboard', active: '/', body: `
   <h1>Dashboard</h1>
   ${setup.length ? `<div class="flash warn"><b>Setup to finish:</b><ul style="margin:6px 0 0 18px">${setup.map((x) => `<li>${x}</li>`).join('')}</ul></div>` : ''}

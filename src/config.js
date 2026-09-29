@@ -55,5 +55,5 @@ export function assertShopifyConfigured() {
   const missing = [];
   if (!config.shopify.domain) missing.push('SHOPIFY_STORE_DOMAIN');
   if (!config.shopify.token) missing.push('SHOPIFY_ADMIN_TOKEN');
-  if (missing.length) throw new Error(`Shopify is not configured. Set ${missing.join(', ')} in .env`);
+  if (missing.length) throw new Error(`Shopify is not configured: fill in ${missing.join(' and ').replace('SHOPIFY_STORE_DOMAIN', 'the store domain').replace('SHOPIFY_ADMIN_TOKEN', 'the Admin API token')} in Settings → Connections`);
 }

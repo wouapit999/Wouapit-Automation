@@ -5,6 +5,7 @@ import { DEFAULT_PRICING_RULES, computePrice, formatXaf } from '../pricing.js';
 import { getSetting, recentEvents, logEvent } from '../db.js';
 import * as shopify from '../shopify.js';
 import { refreshAllPublished } from '../sync.js';
+import { credentialStatus, saveCredentials, generateSecret, CREDENTIAL_FIELDS } from '../credentials.js';
 import { layout, esc, attr } from '../util/html.js';
 
 export const router = Router();
@@ -30,6 +31,9 @@ router.get('/settings', async (req, res) => {
   const fx = await getFxRates();
   const sample = computePrice({ supplierPrice: 10, supplierCurrency: 'USD', supplierShipping: 3 }, rules, fx);
   const events = await recentEvents(25);
+  const cred = await credentialStatus();
+  const src = (n) => cred[n].source === 'settings' ? '<span class="badge published">saved here</span>' : cred[n].source === 'environment' ? '<span class="badge">from environment</span>' : '<span class="badge error">not set</span>';
+  const field = (n, extra = '') => { const c = cred[n]; return `<div><label><b>${esc(c.label)}</b> ${src(n)}</label><input type="${c.secret ? 'password' : 'text'}" name="${n}" value="${c.secret ? '' : attr(c.value)}" placeholder="${c.secret ? (c.value ? '•••••••• (saved — leave blank to keep)' : '') : ''}" autocomplete="off" ${extra}></div>`; };
   res.send(layout({ title: 'Settings', active: '/settings', flash: flashFrom(req.query), body: `
   <h1>Settings</h1>
   <div class="card"><h2>Pricing rules</h2>
@@ -47,14 +51,42 @@ router.get('/settings', async (req, res) => {
       <form method="post" action="/settings/fx/refresh"><button class="secondary" type="submit">Fetch live rates</button></form></div>
     <p class="small muted">The FCFA is pegged to the euro (655.957). Add a few % on USD/CNY if your bank or AliExpress applies a worse rate than the market.</p>
   </div>
-  <div class="card"><h2>Connections</h2>
+  <div class="card"><h2>Connections &amp; credentials</h2>
+    <p class="small muted">Saved encrypted in the database and used immediately; no redeploy needed. Values entered here override the environment variables of the same name.</p>
+    <form method="post" action="/settings/credentials">
+      <h3 style="margin:10px 0 0;font-size:15px">Shopify</h3>
+      <div class="row">
+        ${field('shopifyDomain', 'placeholder="ma-boutique.myshopify.com"')}
+        ${field('shopifyToken')}
+        ${field('shopifyApiSecret')}
+        ${field('shopifyApiVersion')}
+      </div>
+      <h3 style="margin:16px 0 0;font-size:15px">This app</h3>
+      <div class="row">
+        ${field('appUrl', 'placeholder="https://wouapit-automation.vercel.app"')}
+        ${field('cronSecret')}
+      </div>
+      <p class="small muted">Cron secret: on Vercel the scheduler sends this value itself, so the <b>same value</b> must also be in Vercel → Settings → Environment Variables → <code>CRON_SECRET</code>. Suggested value: <code>${esc(generateSecret())}</code></p>
+      <h3 style="margin:16px 0 0;font-size:15px">AliExpress Dropshipping API (optional)</h3>
+      <div class="row">
+        ${field('aliAppKey')}
+        ${field('aliAppSecret')}
+        ${field('aliAccessToken')}
+        <div><label><b>${esc(CREDENTIAL_FIELDS.aliAutoOrder.label)}</b> ${src('aliAutoOrder')}</label>
+          <select name="aliAutoOrder"><option value="false" ${!/^(1|true|yes|on)$/i.test(cred.aliAutoOrder.value) ? 'selected' : ''}>Off — I buy manually</option><option value="true" ${/^(1|true|yes|on)$/i.test(cred.aliAutoOrder.value) ? 'selected' : ''}>On — order & pay automatically when a customer pays</option></select></div>
+      </div>
+      <p class="small muted">To remove a saved secret, type <code>__clear__</code> in its field.</p>
+      <div class="actions"><button type="submit">Save credentials</button></div>
+    </form>
+  </div>
+  <div class="card"><h2>Status</h2>
     <table><tbody>
       <tr><td>Shopify store</td><td>${config.shopify.domain ? `<code>${esc(config.shopify.domain)}</code> · API ${esc(config.shopify.apiVersion)} · new products: ${esc(config.shopify.defaultStatus)}` : '<span class="badge error">not configured</span>'}</td>
         <td class="right"><form method="post" action="/settings/shopify/test"><button class="secondary" type="submit">Test connection</button></form></td></tr>
-      <tr><td>Order webhooks</td><td>${config.appUrl ? `<code>${esc(config.appUrl)}/webhooks/shopify</code>` : '<span class="badge error">APP_URL not set</span>'} · secret ${config.shopify.apiSecret ? 'set' : '<span class="badge error">missing</span>'}</td>
+      <tr><td>Order webhooks</td><td>${config.appUrl ? `<code>${esc(config.appUrl)}/webhooks/shopify</code>` : '<span class="badge error">public URL not set</span>'} · secret ${config.shopify.apiSecret ? 'set' : '<span class="badge error">missing</span>'}</td>
         <td class="right"><form method="post" action="/settings/shopify/webhooks"><button class="secondary" type="submit">Register webhooks</button></form></td></tr>
       <tr><td>AliExpress API</td><td>${config.aliexpress.enabled ? `connected · auto-order <b>${config.aliexpress.autoOrder ? 'ON' : 'off'}</b>` : 'not configured (page scraping fallback in use)'}</td><td></td></tr>
-      <tr><td>Supplier price sync</td><td>${config.priceSyncIntervalHours > 0 ? `every ${config.priceSyncIntervalHours}h` : 'manual'}</td>
+      <tr><td>Supplier price sync</td><td>${config.priceSyncIntervalHours > 0 ? `every ${config.priceSyncIntervalHours}h` : config.cronSecret ? 'daily via cron' : 'manual'}</td>
         <td class="right"><form method="post" action="/settings/sync-prices"><button class="secondary" type="submit">Sync all published now</button></form></td></tr>
     </tbody></table>
   </div>
@@ -63,6 +95,13 @@ router.get('/settings', async (req, res) => {
   </div>` }));
 });
 
+router.post('/settings/credentials', async (req, res) => {
+  try {
+    await saveCredentials(req.body);
+    await logEvent('credentials.saved', 'Connection credentials updated from Settings');
+    redirectMsg(res, '/settings', 'ok', 'Credentials saved and active. Use "Test connection" to verify.');
+  } catch (e) { redirectMsg(res, '/settings', 'err', `Could not save credentials: ${e.message}`); }
+});
 router.post('/settings/pricing', async (req, res) => {
   await savePricingRules(req.body);
   redirectMsg(res, '/settings', 'ok', 'Pricing rules saved. Use "Save & recompute" on a product, or "Sync all published", to apply.');
@@ -83,7 +122,7 @@ router.post('/settings/shopify/test', async (req, res) => {
 });
 router.post('/settings/shopify/webhooks', async (req, res) => {
   try {
-    if (!config.appUrl) throw new Error('Set APP_URL in .env to your public https URL first');
+    if (!config.appUrl) throw new Error('Set the public URL of this app in Connections & credentials first');
     const r = await shopify.registerWebhooks(config.appUrl);
     await logEvent('webhooks.registered', r.map((x) => `${x.topic}: ${x.status}`).join(', '));
     redirectMsg(res, '/settings', 'ok', r.map((x) => `${x.topic}: ${x.status}`).join(' · '));

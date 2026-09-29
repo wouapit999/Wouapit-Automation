@@ -2,6 +2,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import { config } from './config.js';
 import { getDb, logEvent } from './db.js';
+import { applyCredentials } from './credentials.js';
 import { handleShopifyWebhook } from './webhooks.js';
 import { refreshAllPublished } from './sync.js';
 import { router as dashboard } from './routes/dashboard.js';
@@ -20,7 +21,7 @@ export function createApp() {
   app.set('trust proxy', true);
 
   // Make sure the schema exists before any request touches the database (serverless cold starts included).
-  app.use(async (req, res, next) => { try { await getDb(); next(); } catch (e) { next(e); } });
+  app.use(async (req, res, next) => { try { await getDb(); await applyCredentials(); next(); } catch (e) { next(e); } });
 
   // Shopify webhooks: raw body needed for HMAC verification, no auth (signature is the auth).
   app.post('/webhooks/shopify', express.raw({ type: '*/*', limit: '2mb' }), handleShopifyWebhook);
@@ -63,6 +64,7 @@ export function createApp() {
 // Long-running server (laptop, Docker, VPS, Fly.io). On Vercel, api/index.js imports createApp instead.
 if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
   await getDb();
+  await applyCredentials();
   const app = createApp();
   app.listen(config.port, () => {
     console.log(`Wouapit Automation admin: http://localhost:${config.port}  (user: admin, password: ADMIN_PASSWORD)`);

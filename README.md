@@ -56,19 +56,19 @@ Vercel runs the app as serverless functions. Its disk is wiped at every deploy, 
    repository `wouapit999/Wouapit-Automation`.
 2. Leave **Root Directory** as the repository root and the framework preset on *Other*; `vercel.json` takes care
    of routing and the cron job.
-3. Open **Environment Variables** on the same screen and add:
-   `ADMIN_PASSWORD`, `SHOPIFY_STORE_DOMAIN`, `SHOPIFY_ADMIN_TOKEN`, `SHOPIFY_API_SECRET`,
-   `CRON_SECRET` (any long random text), `NODEJS_HELPERS` = `0` (keeps the raw webhook body so Shopify
-   signatures can be verified). Click **Deploy**.
+3. Open **Environment Variables** on the same screen and add just three:
+   `ADMIN_PASSWORD` (your login), `CRON_SECRET` (any long random text; Vercel uses it to call the daily price
+   sync) and `NODEJS_HELPERS` = `0` (keeps the raw webhook body so Shopify signatures can be verified).
+   Click **Deploy**. The Shopify keys are entered later in the admin interface.
 4. Add the database: project → **Storage** tab → **Create Database → Neon** (Postgres) → free plan → region
    *Frankfurt* or *Paris* → connect it to the project. This injects `DATABASE_URL` (and `POSTGRES_URL`).
    The tables are created automatically on the first request.
    (Alternative: create a project at https://console.neon.tech, copy the **pooled** connection string and add it
    as `DATABASE_URL` by hand.)
-5. Project → **Settings → Environment Variables**: add `APP_URL` = your Vercel URL, e.g.
-   `https://wouapit999.vercel.app` (shown on the project page; you can add your own domain later).
-6. **Deployments → ⋯ → Redeploy** so the new variables are picked up. Open the URL, log in
-   (`admin` / your password), then **Settings → Test connection** and **Register webhooks**.
+5. **Deployments → ⋯ → Redeploy** so the database variable is picked up. Open your Vercel URL, log in
+   (`admin` / your password) and go to **Settings → Connections & credentials**: enter the Shopify store domain,
+   Admin API token and API secret key, the public URL of the app (your Vercel address) and paste the same
+   `CRON_SECRET`. Save, then **Test connection** and **Register webhooks**.
 
 Every `git push` to `main` redeploys automatically. The daily supplier price sync runs through Vercel Cron
 (`vercel.json`, 05:00 UTC); it calls `/cron/sync-prices` with your `CRON_SECRET`.
@@ -125,6 +125,8 @@ at the server, then register the webhooks from Settings. Set `DATABASE_URL` in `
 
 ### First steps in the interface
 
+0. **Settings → Connections & credentials**: Shopify store domain, Admin API token, API secret key, public URL
+   of the app. They are stored encrypted in the database and take effect immediately.
 1. **Settings → Test connection** to check the Shopify token (it warns if the store currency is not XAF).
 2. **Settings → Fetch live rates** (or type your own USD/CNY → XAF rates; add a few % if AliExpress/your bank charges a worse rate).
 3. **Settings → Pricing rules**: markup %, minimum profit, transport per unit, customs %, gateway fee %, rounding.
@@ -143,7 +145,7 @@ you, not for customers (customers keep using your Shopify storefront).
 | **Products** → product page | edit listing, see supplier price → FCFA selling price with profit, conditions, publish to Shopify |
 | **Orders** | paid Shopify orders with customer and address |
 | **Supplier orders** | one line per item to buy: supplier link, quantity, address to paste, amount owed, mark ordered/paid, tracking → Shopify fulfilment |
-| **Settings** | pricing rules, exchange rates, Shopify connection test, webhook registration, price sync, activity log |
+| **Settings** | Shopify/AliExpress credentials and public URL, pricing rules, exchange rates, connection test, webhook registration, price sync, activity log |
 
 ![Dashboard](docs/dashboard.png)
 
@@ -203,6 +205,7 @@ src/providers/           low-level marketplace access used by the adapters: alie
 src/pricing.js           pricing engine (pure functions, unit‑tested)
 src/shopify.js           Admin GraphQL: productSet, publish, price updates, webhooks, fulfilments
 src/webhooks.js          HMAC verification, orders/paid → purchase orders, optional auto‑order
+src/credentials.js       credentials entered in Settings, AES‑256‑GCM encrypted in the database, overriding env vars
 src/sync.js              recompute prices, refresh from supplier, push to Shopify
 src/db.js                Postgres schema + queries: Neon via DATABASE_URL, or embedded PGlite in data/ when unset
 api/index.js, vercel.json Vercel serverless entry point, routing, cron
